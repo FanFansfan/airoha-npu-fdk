@@ -2,6 +2,8 @@
 #include "an7581/services/wifi/region.h"
 
 #include "an7581/runtime/memory.h"
+#include "an7581/services/wifi/mt7916_mailbox_interface.h"
+#include "an7581/services/wifi/wlan_target.h"
 
 #define NPU_WIFI_REGION_ALIGNMENT UINT32_C(0x20)
 
@@ -271,6 +273,7 @@ bool npu_wifi_mt7996_dynamic_region_lookup(uint32_t dynamic_base, uint32_t type,
   return true;
 }
 
+#if NPU_WIFI_WLAN_CHIP == NPU_WIFI_WLAN_CHIP_MT7996
 static bool mt7996_rx_ring_region_lookup(uint32_t dynamic_base,
                                          uint32_t set_interface,
                                          struct npu_wifi_region *region) {
@@ -301,6 +304,31 @@ static bool mt7996_rx_ring_region_lookup(uint32_t dynamic_base,
 
   return npu_wifi_mt7996_dynamic_region_lookup(dynamic_base, type, region);
 }
+#endif
+
+#if NPU_WIFI_WLAN_CHIP == NPU_WIFI_WLAN_CHIP_MT7916
+/* MT7916 binds the two data rings to interfaces 0 and 1 and has no
+ * MSDU-page or indication ring.
+ */
+static bool mt7916_rx_ring_region_lookup(uint32_t dynamic_base,
+                                         uint32_t set_interface,
+                                         struct npu_wifi_region *region) {
+  uint32_t type;
+
+  switch (set_interface) {
+  case NPU_WIFI_MT7916_RX_DATA_BAND0_INTERFACE:
+    type = NPU_WIFI_MT7996_DYNAMIC_PRIMARY_EAGLE_RX;
+    break;
+  case NPU_WIFI_MT7916_RX_DATA_BAND1_INTERFACE:
+    type = NPU_WIFI_MT7996_DYNAMIC_SECONDARY_EAGLE_RX;
+    break;
+  default:
+    return false;
+  }
+
+  return npu_wifi_mt7996_dynamic_region_lookup(dynamic_base, type, region);
+}
+#endif
 
 bool npu_wifi_rx_ring_region_lookup(uint32_t dynamic_base,
                                     uint32_t set_interface,
@@ -308,5 +336,9 @@ bool npu_wifi_rx_ring_region_lookup(uint32_t dynamic_base,
   if (region == NULL)
     return false;
 
+#if NPU_WIFI_WLAN_CHIP == NPU_WIFI_WLAN_CHIP_MT7916
+  return mt7916_rx_ring_region_lookup(dynamic_base, set_interface, region);
+#else
   return mt7996_rx_ring_region_lookup(dynamic_base, set_interface, region);
+#endif
 }

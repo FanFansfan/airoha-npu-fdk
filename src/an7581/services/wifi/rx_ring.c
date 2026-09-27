@@ -3,6 +3,8 @@
 
 #include "an7581/runtime/memory.h"
 #include "an7581/services/wifi/mt7996_mailbox_interface.h"
+#include "an7581/services/wifi/mt7916_mailbox_interface.h"
+#include "an7581/services/wifi/wlan_target.h"
 
 #define NPU_WIFI_RX_BUFFER_ADDRESS_MASK UINT32_C(0x3fffffff)
 #define NPU_WIFI_RX_BUFFER_ADDRESS_ALIAS UINT32_C(0x80000000)
@@ -30,6 +32,7 @@ _Static_assert(sizeof(struct npu_wifi_rx_descriptor) ==
       .stores_buffer_id = (store_id),                                          \
   }
 
+#if NPU_WIFI_WLAN_CHIP == NPU_WIFI_WLAN_CHIP_MT7996
 static const struct npu_wifi_rx_ring_profile profiles[] = {
     RX_PROFILE(NPU_WIFI_RX_RING_EAGLE_DATA, NPU_WIFI_RX_DESCRIPTOR_LIMIT,
                NPU_WIFI_RX_DESCRIPTOR_SIZE, NPU_WIFI_RX_PACKET_BUFFER_SIZE,
@@ -73,6 +76,32 @@ static const struct npu_wifi_rx_ring_profile profiles[] = {
                NPU_WIFI_MT7996_IGNORED_RX_INTERFACE,
                NPU_WIFI_RX_NO_PUBLICATION_INTERFACE, false, false),
 };
+#endif
+
+#if NPU_WIFI_WLAN_CHIP == NPU_WIFI_WLAN_CHIP_MT7916
+/* MT7916 publishes two plain WFDMA data rings. There is no MSDU-page,
+ * indication or RXDMAD_C ring because the chip has no RRO engine: the NPU
+ * owns the reorder state through its own iNode tables.
+ */
+static const struct npu_wifi_rx_ring_profile mt7916_profiles[] = {
+    RX_PROFILE(NPU_WIFI_RX_RING_EAGLE_DATA, NPU_WIFI_RX_DESCRIPTOR_LIMIT,
+               NPU_WIFI_RX_DESCRIPTOR_SIZE, NPU_WIFI_RX_PACKET_BUFFER_SIZE,
+               UINT32_C(0x00000080), NPU_WIFI_RX_EAGLE_CONTROL,
+               NPU_WIFI_MT7916_RX_DATA_BAND0_INTERFACE,
+               NPU_WIFI_MT7916_RX_DATA_BAND0_INTERFACE, true, true),
+    RX_PROFILE(NPU_WIFI_RX_RING_EAGLE_DATA,
+               NPU_WIFI_RX_MT7996_SECONDARY_DESCRIPTOR_LIMIT,
+               NPU_WIFI_RX_DESCRIPTOR_SIZE, NPU_WIFI_RX_PACKET_BUFFER_SIZE,
+               UINT32_C(0x00000080), NPU_WIFI_RX_EAGLE_CONTROL,
+               NPU_WIFI_MT7916_RX_DATA_BAND1_INTERFACE,
+               NPU_WIFI_MT7916_RX_DATA_BAND1_INTERFACE, true, true),
+    RX_PROFILE(NPU_WIFI_RX_RING_TX_DONE, NPU_WIFI_RX_TX_DONE_DESCRIPTOR_LIMIT,
+               NPU_WIFI_RX_DESCRIPTOR_SIZE, NPU_WIFI_RX_PACKET_BUFFER_SIZE,
+               UINT32_C(0x00000080), NPU_WIFI_RX_EAGLE_CONTROL,
+               NPU_WIFI_MT7916_RX_TX_DONE_INTERFACE,
+               NPU_WIFI_RX_NO_PUBLICATION_INTERFACE, true, false),
+};
+#endif
 
 static const struct npu_wifi_rx_ring_profile *
 find_profile(const struct npu_wifi_rx_ring_profile *entries,
@@ -88,8 +117,14 @@ find_profile(const struct npu_wifi_rx_ring_profile *entries,
 
 const struct npu_wifi_rx_ring_profile *
 npu_wifi_rx_ring_find_profile(uint32_t set_interface) {
+#if NPU_WIFI_WLAN_CHIP == NPU_WIFI_WLAN_CHIP_MT7916
+  return find_profile(mt7916_profiles,
+                      sizeof(mt7916_profiles) / sizeof(mt7916_profiles[0]),
+                      set_interface);
+#else
   return find_profile(profiles, sizeof(profiles) / sizeof(profiles[0]),
                       set_interface);
+#endif
 }
 
 static bool profile_is_valid(const struct npu_wifi_rx_ring_profile *profile) {
