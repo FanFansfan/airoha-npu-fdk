@@ -7,7 +7,7 @@
 
 struct an7581_wifi_mt7996_rro_control_board_binding {
   const struct npu_wifi_mt7996_rro_pipeline_config *pipeline;
-  const struct npu_wifi_mt7996_control_plane_config *control_plane;
+  const an7581_wifi_control_plane_config *control_plane;
   an7581_wifi_mt7996_rro_control_worker_wake wake_workers;
   void *wake_context;
   an7581_board_prepare_stop prepare_stop;

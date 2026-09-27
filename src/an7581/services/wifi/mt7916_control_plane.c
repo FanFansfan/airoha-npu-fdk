@@ -46,7 +46,7 @@ static bool pointer_is_aligned(const void *pointer, size_t alignment) {
 }
 
 static bool
-binding_matches_region(const struct npu_wifi_mt7916_memory_binding *binding,
+binding_matches_region(const struct npu_wifi_mt7996_memory_binding *binding,
                        const struct npu_wifi_region *region, size_t alignment) {
   return binding != NULL && region != NULL &&
          pointer_is_aligned(binding->memory, alignment) &&
@@ -182,8 +182,17 @@ static bool initialize_tx_done_packet_id_map(
   return true;
 }
 
-/* MT7916 has no RRO engine: bind the NPU-owned reorder control so that the
- * iNode commands program tables the NPU itself maintains.
+/* MT7916 has no chip RRO engine, so the NPU has to own the reorder state.
+ * Binding npu_wifi_rro_control makes WLAN_FUNC_SET_WAIT_INODE_TXRX_REG_ADDR
+ * program the NPU's own iNode tables instead of only caching host-supplied
+ * addresses.
+ *
+ * The binding is optional: it needs an RRO table backend, an ICV error table
+ * and a buffer-reset hook, none of which the current board binding provides
+ * (npu_wifi_rro_control is unwired on MT7996 too). When they are absent the
+ * control plane still comes up and iNode commands fall back to the standard
+ * cached/replayed path, which keeps MT7916 behaviour aligned with MT7996
+ * until the RRO engine resources are wired up.
  */
 static bool initialize_rro_control(
     struct npu_wifi_mt7916_control_plane *control_plane,
@@ -200,9 +209,11 @@ static bool initialize_rro_control(
       .icv_error_word_count = config->rro_icv_error_word_count,
   };
 
-  if (rro_config.table_backend == NULL || rro_config.map_table == NULL ||
-      rro_config.reset_buffers == NULL)
-    return false;
+  if (config->rro_table_backend == NULL || config->rro_map_table == NULL ||
+      config->rro_reset_buffers == NULL ||
+      config->rro_icv_error_table == NULL ||
+      config->rro_set_page_pool_address == NULL)
+    return true;
 
   if (npu_wifi_rro_control_initialize(&control_plane->rro_control,
                                       &rro_config) != NPU_RUNTIME_SUCCESS)
@@ -213,10 +224,15 @@ static bool initialize_rro_control(
           NPU_WIFI_MT7916_RRO_INFORMATION_INTERFACE) != NPU_RUNTIME_SUCCESS)
     return false;
 
-  return npu_wifi_rro_control_bind_lifecycle(
-             &control_plane->rro_control, config->rro_prepare_stop,
-             config->rro_resume, config->rro_lifecycle_context) ==
-         NPU_RUNTIME_SUCCESS;
+  if (config->rro_prepare_stop != NULL && config->rro_resume != NULL &&
+      npu_wifi_rro_control_bind_lifecycle(
+          &control_plane->rro_control, config->rro_prepare_stop,
+          config->rro_resume, config->rro_lifecycle_context) !=
+          NPU_RUNTIME_SUCCESS)
+    return false;
+
+  control_plane->rro_bound = true;
+  return true;
 }
 
 static bool initialize_rx_backend(
@@ -559,10 +575,11 @@ static bool initialize_backend_bundle(
       .context = &control_plane->eagle_tx_backend,
   };
   /* NPU-owned reordering: consumes WLAN_FUNC_SET_WAIT_INODE_TXRX_REG_ADDR */
-  components[component_count++] = (struct npu_wifi_backend_binding){
-      .operations = &npu_wifi_rro_control_backend_operations,
-      .context = &control_plane->rro_control,
-  };
+  if (control_plane->rro_bound)
+    components[component_count++] = (struct npu_wifi_backend_binding){
+        .operations = &npu_wifi_rro_control_backend_operations,
+        .context = &control_plane->rro_control,
+    };
   for (index = 0U; index < config->additional_backend_count; ++index)
     components[component_count++] = config->additional_backends[index];
 

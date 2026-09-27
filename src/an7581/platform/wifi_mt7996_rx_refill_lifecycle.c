@@ -11,6 +11,14 @@ struct refill_ring_requirement {
   uint32_t requirement;
 };
 
+#if NPU_WIFI_WLAN_CHIP == NPU_WIFI_WLAN_CHIP_MT7916
+static const struct refill_ring_requirement ring_requirements[] = {
+    {NPU_WIFI_MT7916_RX_DATA_BAND0_INTERFACE,
+     AN7581_WIFI_MT7996_RX_REFILL_REQUIRED_RRO_BAND0},
+    {NPU_WIFI_MT7916_RX_DATA_BAND1_INTERFACE,
+     AN7581_WIFI_MT7996_RX_REFILL_REQUIRED_RRO_BAND2},
+};
+#else
 static const struct refill_ring_requirement ring_requirements[] = {
     {NPU_WIFI_MT7996_RX_RRO_BAND0_INTERFACE,
      AN7581_WIFI_MT7996_RX_REFILL_REQUIRED_RRO_BAND0},
@@ -23,6 +31,7 @@ static const struct refill_ring_requirement ring_requirements[] = {
     {NPU_WIFI_MT7996_RX_MSDU_PAGE_BAND2_INTERFACE,
      AN7581_WIFI_MT7996_RX_REFILL_REQUIRED_MSDU_BAND2},
 };
+#endif
 
 _Static_assert(sizeof(ring_requirements) / sizeof(ring_requirements[0]) ==
                    AN7581_WIFI_MT7996_RX_REFILL_RING_COUNT,
@@ -60,6 +69,8 @@ enum npu_runtime_result an7581_wifi_mt7996_rx_refill_configuration_readiness(
               (NPU_WIFI_RX_PACKET_BUFFER_SIZE - 1U)) != 0U) {
     readiness->invalid |= AN7581_WIFI_MT7996_RX_REFILL_REQUIRED_PACKET_BUFFER;
   }
+#if NPU_WIFI_WLAN_CHIP != NPU_WIFI_WLAN_CHIP_MT7916
+  /* MT7916 has no MSDU-page ring, so no BA-node buffer is required. */
   if (!configuration->dram_ba_node_address_valid) {
     readiness->missing |= AN7581_WIFI_MT7996_RX_REFILL_REQUIRED_MSDU_BUFFER;
   } else if (configuration->dram_ba_node_address == 0U ||
@@ -67,6 +78,7 @@ enum npu_runtime_result an7581_wifi_mt7996_rx_refill_configuration_readiness(
               (NPU_WIFI_RX_MSDU_PAGE_SIZE - 1U)) != 0U) {
     readiness->invalid |= AN7581_WIFI_MT7996_RX_REFILL_REQUIRED_MSDU_BUFFER;
   }
+#endif
 
   for (index = 0U;
        index < sizeof(ring_requirements) / sizeof(ring_requirements[0]);
@@ -130,7 +142,7 @@ enum npu_runtime_result an7581_wifi_mt7996_rx_refill_lifecycle_initialize(
 }
 
 static struct npu_wifi_rx_arena *
-find_rx_arena(struct npu_wifi_mt7996_control_plane *control_plane,
+find_rx_arena(an7581_wifi_control_plane *control_plane,
               uint32_t set_interface) {
   size_t index;
 
@@ -145,7 +157,7 @@ find_rx_arena(struct npu_wifi_mt7996_control_plane *control_plane,
 
 static enum npu_runtime_result
 bind_ring(struct an7581_wifi_mt7996_rx_refill_lifecycle *lifecycle,
-          struct npu_wifi_mt7996_control_plane *control_plane,
+          an7581_wifi_control_plane *control_plane,
           size_t ring_index) {
   const uint32_t set_interface = ring_requirements[ring_index].set_interface;
   const struct npu_wifi_interface_configuration *interface =
@@ -201,7 +213,7 @@ static enum npu_runtime_result
 bind_rings(struct an7581_wifi_mt7996_rx_refill_lifecycle *lifecycle) {
   struct an7581_wifi_mt7996_rro_control_platform *platform =
       lifecycle->control_lifecycle->platform;
-  struct npu_wifi_mt7996_control_plane *control_plane;
+  an7581_wifi_control_plane *control_plane;
   size_t index;
 
   if (platform == NULL || !platform->initialized)

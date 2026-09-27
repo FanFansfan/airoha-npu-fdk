@@ -6,8 +6,13 @@
 #include "an7581/platform/wifi_mt7996_rro_control_lifecycle.h"
 #include "an7581/services/wifi/rx_refill.h"
 
+#if NPU_WIFI_WLAN_CHIP == NPU_WIFI_WLAN_CHIP_MT7916
+/* MT7916 exposes two data rings and no MSDU-page ring. */
+#define AN7581_WIFI_MT7996_RX_REFILL_RING_COUNT UINT32_C(2)
+#else
 #define AN7581_WIFI_MT7996_RX_REFILL_RING_COUNT                                \
   NPU_WIFI_RX_REFILL_WORKER_MAX_RINGS
+#endif
 #define AN7581_WIFI_MT7996_RX_REFILL_REQUIRED_PACKET_BUFFER (UINT32_C(1) << 0)
 #define AN7581_WIFI_MT7996_RX_REFILL_REQUIRED_MSDU_BUFFER (UINT32_C(1) << 1)
 #define AN7581_WIFI_MT7996_RX_REFILL_REQUIRED_RRO_BAND0 (UINT32_C(1) << 2)

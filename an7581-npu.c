@@ -85,7 +85,7 @@ static bool board_mmio_write32(void *context, uint32_t address,
 }
 
 static struct npu_wifi_mt7996_rro_pipeline_config rro_pipeline_config;
-static struct npu_wifi_mt7996_control_plane_config rro_control_plane_config;
+static an7581_wifi_control_plane_config rro_control_plane_config;
 static volatile struct npu_wifi_mt7996_band0_diagnostic_counters
     *g_band0_diagnostic_counters;
 static volatile struct npu_wifi_mt7996_band1_diagnostic_counters
@@ -320,7 +320,7 @@ static void wifi_data_plane_transition_progress(void) {
 }
 
 static void wifi_data_plane_handle_request(void) {
-  struct npu_wifi_mt7996_control_plane *control_plane =
+  an7581_wifi_control_plane *control_plane =
       &g_rro_control_platform.control_plane;
 
   if (wifi_request_is_inode_action(NPU_WIFI_RRO_INODE_STOP) &&
@@ -330,7 +330,7 @@ static void wifi_data_plane_handle_request(void) {
                  NPU_WIFI_RRO_INODE_RESET_BUFFER_IDS) &&
              g_wifi_data_plane_transition == WIFI_DATA_PLANE_STOPPED) {
     enum npu_runtime_result status =
-        npu_wifi_mt7996_control_plane_prepare_reinitialization(control_plane);
+        an7581_wifi_control_plane_prepare_reinitialization(control_plane);
 
     if (status != NPU_RUNTIME_SUCCESS)
       an7581_panic(AN7581_PANIC_CONFIGURATION);
@@ -359,6 +359,45 @@ rro_map_table(void *context, uint32_t physical_address, uint32_t length,
       local_address;
   return NPU_RUNTIME_SUCCESS;
 }
+
+#if NPU_WIFI_WLAN_CHIP == NPU_WIFI_WLAN_CHIP_MT7916
+/* MT7916 has no chip RRO engine: npu_wifi_rro_control runs the reorder
+ * windows in the NPU. These two hooks connect it to the board resources.
+ */
+static enum npu_runtime_result rro_control_reset_buffers(void *context) {
+  struct an7581_wifi_mt7996_rro_control_platform *platform = context;
+
+  if (platform == NULL || platform->rro_icv_error_table == NULL)
+    return NPU_RUNTIME_OUT_OF_RANGE;
+
+  /* Drop every reorder window the host published; the host republishes them
+   * when the data plane is restarted.
+   */
+  return npu_wifi_rro_table_backend_initialize(
+             &platform->rro_table_backend, g_rro_normal_groups,
+             NPU_WIFI_RRO_NORMAL_TABLE_GROUP_LIMIT,
+             NPU_WIFI_RRO_NORMAL_TABLE_ENTRY_LIMIT, NULL,
+             NPU_WIFI_RRO_SPECIAL_TABLE_ENTRY_LIMIT) == NPU_RUNTIME_SUCCESS
+             ? NPU_RUNTIME_SUCCESS
+             : NPU_RUNTIME_OUT_OF_RANGE;
+}
+
+static enum npu_runtime_result rro_control_set_page_pool(void *context,
+                                                         uint32_t address) {
+  struct an7581_wifi_mt7996_rro_control_platform *platform = context;
+
+  if (platform == NULL)
+    return NPU_RUNTIME_INVALID_ARGUMENT;
+  if (platform->rro_page_pool_address_valid &&
+      platform->rro_page_pool_address != address)
+    return NPU_RUNTIME_OWNERSHIP_ERROR;
+
+  platform->rro_page_pool_address = address;
+  platform->rro_page_pool_address_valid = true;
+  an7581_dma_memory_barrier();
+  return NPU_RUNTIME_SUCCESS;
+}
+#endif
 
 static enum npu_runtime_result rro_discard_cache(void *context,
                                                  uint32_t line_address) {
@@ -585,7 +624,21 @@ configure_rro_board(struct npu_wifi_sram_allocator *allocator) {
       .information_interface = NPU_WIFI_MT7996_RRO_INFORMATION_INTERFACE,
       .normal_cpu_queue_enabled = true,
   };
-  rro_control_plane_config = (struct npu_wifi_mt7996_control_plane_config){
+#if NPU_WIFI_WLAN_CHIP == NPU_WIFI_WLAN_CHIP_MT7916
+  /* The NPU owns reordering, so seed its window table and ICV bitmap here.
+   * The host publishes the per-session windows later via
+   * WLAN_FUNC_SET_WAIT_INODE_TXRX_REG_ADDR.
+   */
+  if (npu_wifi_rro_table_backend_initialize(
+          &g_rro_control_platform.rro_table_backend, g_rro_normal_groups,
+          NPU_WIFI_RRO_NORMAL_TABLE_GROUP_LIMIT,
+          NPU_WIFI_RRO_NORMAL_TABLE_ENTRY_LIMIT, NULL,
+          NPU_WIFI_RRO_SPECIAL_TABLE_ENTRY_LIMIT) != NPU_RUNTIME_SUCCESS)
+    return NPU_RUNTIME_OUT_OF_RANGE;
+  g_rro_control_platform.rro_icv_error_table =
+      (volatile uint32_t *)(uintptr_t)icv_region.address;
+#endif
+  rro_control_plane_config = (an7581_wifi_control_plane_config){
       .shared_allocator = &g_completion_platform.allocator,
       .shared_packet_pool = &g_completion_platform.packet_pool,
       .packet_recycle = memory_binding_from_region(
@@ -620,6 +673,20 @@ configure_rro_board(struct npu_wifi_sram_allocator *allocator) {
       .acquire = an7581_hardware_mutex_acquire,
       .release = an7581_hardware_mutex_release,
       .lock_context = &g_completion_platform.packet_pool_mutexes,
+#if NPU_WIFI_WLAN_CHIP == NPU_WIFI_WLAN_CHIP_MT7916
+      /* NPU-owned reordering. The reorder windows and the ICV bitmap are
+       * the same buffers the indication pipeline already owns.
+       */
+      .rro_table_backend = &g_rro_control_platform.rro_table_backend,
+      .rro_icv_error_table = (volatile uint32_t *)(uintptr_t)icv_region.address,
+      .rro_icv_error_word_count = NPU_WIFI_RRO_ICV_ERROR_STORAGE_WORD_COUNT,
+      .rro_map_table = rro_map_table,
+      .rro_reset_buffers = rro_control_reset_buffers,
+      .rro_set_page_pool_address = rro_control_set_page_pool,
+      .rro_map_context = NULL,
+      .rro_reset_context = &g_rro_control_platform,
+      .rro_page_pool_context = &g_rro_control_platform,
+#endif
       .map_host_buffer = board_map_host_buffer,
       .tdm_rx_platform = &g_tx_fast_path_platform.fast_path.tdm_rx,
       .write32 = board_mmio_write32,
@@ -1042,9 +1109,11 @@ void firmware_main(uint32_t core) {
                       &g_band1_diagnostic_counters
                            ->rx_packet_id_allocation_failures,
                   },
+#if NPU_WIFI_WLAN_CHIP != NPU_WIFI_WLAN_CHIP_MT7916
                   {&g_band0_diagnostic_counters->msdu_page_refills_band0, NULL},
                   {&g_band0_diagnostic_counters->msdu_page_refills_band1, NULL},
                   {&g_band0_diagnostic_counters->msdu_page_refills_band2, NULL},
+#endif
               },
           .operation_context = rx_refill_board_configuration.operation_context,
           .activation_allowed =

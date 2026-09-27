@@ -13,7 +13,7 @@ enum npu_runtime_result an7581_wifi_mt7996_rro_control_platform_initialize(
       config->wake_workers == NULL)
     return NPU_RUNTIME_INVALID_ARGUMENT;
   if (config->control_plane->additional_backend_count >
-      NPU_WIFI_MT7996_CONTROL_ADDITIONAL_BACKEND_LIMIT -
+      AN7581_WIFI_CONTROL_PLANE_ADDITIONAL_BACKEND_LIMIT -
           NPU_WIFI_MT7996_RRO_BACKEND_COUNT)
     return NPU_RUNTIME_OUT_OF_RANGE;
   if (config->control_plane->additional_backend_count != 0U &&
@@ -153,7 +153,7 @@ enum npu_runtime_result an7581_wifi_mt7996_rro_control_lifecycle_step(
     ++lifecycle->control_plane_attempt_count;
     platform->control_plane_config.configuration = lifecycle->configuration;
     platform->control_plane_config.activation_allowed = true;
-    status = npu_wifi_mt7996_control_plane_initialize(
+    status = an7581_wifi_control_plane_initialize(
         &platform->control_plane, &platform->control_plane_config);
     if (status != NPU_RUNTIME_SUCCESS)
       return lifecycle_retryable_failure(lifecycle, result, status);
@@ -201,7 +201,7 @@ enum npu_runtime_result an7581_wifi_mt7996_rro_control_lifecycle_step(
         return lifecycle_retryable_failure(lifecycle, result,
                                            NPU_RUNTIME_OUT_OF_RANGE);
     }
-    status = npu_wifi_mt7996_control_plane_bind_backends(
+    status = an7581_wifi_control_plane_bind_backends(
         &platform->control_plane, rro_backends, rro_backend_count);
     if (status != NPU_RUNTIME_SUCCESS)
       return lifecycle_retryable_failure(lifecycle, result, status);

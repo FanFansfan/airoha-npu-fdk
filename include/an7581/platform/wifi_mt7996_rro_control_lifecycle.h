@@ -5,6 +5,43 @@
 #include "an7581/platform/core56_dispatch.h"
 #include "an7581/services/wifi/mt7996_control_plane.h"
 #include "an7581/services/wifi/mt7996_rro_pipeline.h"
+#include "an7581/services/wifi/rro_metadata.h"
+#include "an7581/services/wifi/wlan_target.h"
+
+/*
+ * The board binding layer is shared, but the control plane it drives is not:
+ * an MT7916 image must own the MT7916 control plane (two EAGLE_DATA rings, no
+ * MSDU-page arena) instead of the MT7996 one. Both control planes keep a
+ * layout-compatible config/state pair, so the switch is a typedef plus three
+ * function aliases and the lifecycle code itself is unchanged.
+ */
+#if NPU_WIFI_WLAN_CHIP == NPU_WIFI_WLAN_CHIP_MT7916
+#include "an7581/services/wifi/mt7916_control_plane.h"
+
+typedef struct npu_wifi_mt7916_control_plane an7581_wifi_control_plane;
+typedef struct npu_wifi_mt7916_control_plane_config
+    an7581_wifi_control_plane_config;
+#define AN7581_WIFI_CONTROL_PLANE_ADDITIONAL_BACKEND_LIMIT                     \
+  NPU_WIFI_MT7916_CONTROL_ADDITIONAL_BACKEND_LIMIT
+#define an7581_wifi_control_plane_initialize                                   \
+  npu_wifi_mt7916_control_plane_initialize
+#define an7581_wifi_control_plane_bind_backends                                \
+  npu_wifi_mt7916_control_plane_bind_backends
+#define an7581_wifi_control_plane_prepare_reinitialization                     \
+  npu_wifi_mt7916_control_plane_prepare_reinitialization
+#else
+typedef struct npu_wifi_mt7996_control_plane an7581_wifi_control_plane;
+typedef struct npu_wifi_mt7996_control_plane_config
+    an7581_wifi_control_plane_config;
+#define AN7581_WIFI_CONTROL_PLANE_ADDITIONAL_BACKEND_LIMIT                     \
+  NPU_WIFI_MT7996_CONTROL_ADDITIONAL_BACKEND_LIMIT
+#define an7581_wifi_control_plane_initialize                                   \
+  npu_wifi_mt7996_control_plane_initialize
+#define an7581_wifi_control_plane_bind_backends                                \
+  npu_wifi_mt7996_control_plane_bind_backends
+#define an7581_wifi_control_plane_prepare_reinitialization                     \
+  npu_wifi_mt7996_control_plane_prepare_reinitialization
+#endif
 
 #define AN7581_WIFI_MT7996_RRO_CONTROL_WORKER_HART_MASK                        \
   ((UINT32_C(1) << AN7581_CORE5_HART) | (UINT32_C(1) << AN7581_CORE6_HART))
@@ -27,7 +64,7 @@ typedef enum npu_runtime_result (*an7581_wifi_mt7996_rro_control_worker_wake)(
 
 struct an7581_wifi_mt7996_rro_control_platform_config {
   const struct npu_wifi_mt7996_rro_pipeline_config *pipeline;
-  const struct npu_wifi_mt7996_control_plane_config *control_plane;
+  const an7581_wifi_control_plane_config *control_plane;
   struct an7581_core56_dispatch *dispatch;
   an7581_wifi_mt7996_rro_control_worker_wake wake_workers;
   void *wake_context;
@@ -35,16 +72,28 @@ struct an7581_wifi_mt7996_rro_control_platform_config {
 
 struct an7581_wifi_mt7996_rro_control_platform {
   struct npu_wifi_mt7996_rro_pipeline_config pipeline_config;
-  struct npu_wifi_mt7996_control_plane_config control_plane_config;
+  an7581_wifi_control_plane_config control_plane_config;
   struct npu_wifi_backend_binding
-      additional_backends[NPU_WIFI_MT7996_CONTROL_ADDITIONAL_BACKEND_LIMIT];
+      additional_backends[AN7581_WIFI_CONTROL_PLANE_ADDITIONAL_BACKEND_LIMIT];
   struct npu_wifi_mt7996_rro_pipeline pipeline;
-  struct npu_wifi_mt7996_control_plane control_plane;
+  an7581_wifi_control_plane control_plane;
   struct an7581_core56_dispatch *dispatch;
   an7581_wifi_mt7996_rro_control_worker_wake wake_workers;
   void *wake_context;
   size_t external_backend_count;
   size_t rro_backend_count;
+#if NPU_WIFI_WLAN_CHIP == NPU_WIFI_WLAN_CHIP_MT7916
+  /* MT7916 has no chip RRO engine, so the NPU owns reordering and needs
+   * the reorder machinery that the MT7996 ASIC provides in hardware:
+   *   - icv_error_table: one bit per (wcid, tid) marking stations whose
+   *     frames failed the integrity check and must not take the fast path
+   *   - rro_table_backend: the per-BA-session reorder windows
+   */
+  struct npu_wifi_rro_table_backend rro_table_backend;
+  volatile uint32_t *rro_icv_error_table;
+  uint32_t rro_page_pool_address;
+  bool rro_page_pool_address_valid;
+#endif
   bool initialized;
 };
 

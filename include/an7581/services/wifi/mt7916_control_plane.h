@@ -3,8 +3,14 @@
 #define NPU_WIFI_MT7916_CONTROL_PLANE_H
 
 #include "an7581/services/wifi/backend_bundle.h"
+#include "an7581/services/wifi/buffer_id_map.h"
 #include "an7581/services/wifi/eagle_tx_backend.h"
 #include "an7581/services/wifi/mt7916_mailbox_interface.h"
+/* Reused verbatim: (memory, size, physical_base) is chip independent and the
+ * board binding layer builds these with a single helper, so both control
+ * planes must accept the same type.
+ */
+#include "an7581/services/wifi/mt7996_control_plane.h"
 #include "an7581/services/wifi/packet_id_backend.h"
 #include "an7581/services/wifi/rro_control.h"
 #include "an7581/services/wifi/rx_backend.h"
@@ -26,11 +32,7 @@
 
 struct an7581_wifi_tdm_rx_platform;
 
-struct npu_wifi_mt7916_memory_binding {
-  void *memory;
-  size_t size;
-  uint32_t physical_base;
-};
+typedef struct npu_wifi_mt7996_memory_binding npu_wifi_mt7916_memory_binding;
 
 typedef bool (*npu_wifi_mt7916_host_buffer_map)(void *context,
                                                 uint32_t host_address,
@@ -42,14 +44,19 @@ struct npu_wifi_mt7916_control_plane_config {
   struct npu_wifi_configuration *configuration;
   struct npu_wifi_sram_allocator *shared_allocator;
   struct npu_wifi_packet_id_pool *shared_packet_pool;
-  struct npu_wifi_mt7916_memory_binding packet_recycle;
-  struct npu_wifi_mt7916_memory_binding token_ids;
-  struct npu_wifi_mt7916_memory_binding force_reset_ids;
-  struct npu_wifi_mt7916_memory_binding dynamic_arena;
-  struct npu_wifi_mt7916_memory_binding tx_done_packet_ids;
+  struct npu_wifi_mt7996_memory_binding packet_recycle;
+  struct npu_wifi_mt7996_memory_binding token_ids;
+  struct npu_wifi_mt7996_memory_binding force_reset_ids;
+  struct npu_wifi_mt7996_memory_binding dynamic_arena;
+  /* MT7916 has no MSDU-page ring. The field is kept only so that the board
+   * binding layer can address either control plane through a single typedef;
+   * it is never consumed.
+   */
+  struct npu_wifi_mt7996_memory_binding msdu_page_ids;
+  struct npu_wifi_mt7996_memory_binding tx_done_packet_ids;
   volatile struct npu_wifi_mt7996_band2_diagnostic_counters
       *diagnostic_counters;
-  struct npu_wifi_mt7916_memory_binding
+  struct npu_wifi_mt7996_memory_binding
       tx_packet_descriptors[NPU_WIFI_MT7916_CONTROL_TX_PACKET_ARENA_COUNT];
   /* NPU-owned reorder: the table backend, the address map and the buffer
    * reset hook replace the host-allocated RRO tables used on MT7996.
@@ -96,6 +103,8 @@ struct npu_wifi_mt7916_control_plane {
   struct npu_wifi_packet_id_pool packet_pool;
   struct npu_wifi_packet_id_pool *packet_pool_owner;
   struct npu_wifi_packet_id_backend packet_id_backend;
+  /* Unused on MT7916, present for layout compatibility only. */
+  struct npu_wifi_buffer_id_map msdu_page_id_pool;
   struct npu_wifi_rro_control rro_control;
   struct npu_wifi_rx_arena rx_arenas[NPU_WIFI_MT7916_CONTROL_RX_ARENA_COUNT];
   struct npu_wifi_rx_static_backend rx_backend;
@@ -127,6 +136,7 @@ struct npu_wifi_mt7916_control_plane {
   bool shared_state_external;
   bool activation_gated;
   bool additional_backends_bound;
+  bool rro_bound;
   bool initialized;
 };
 

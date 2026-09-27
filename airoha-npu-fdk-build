@@ -75,6 +75,15 @@ def parse_arguments(sdk_root: Path) -> argparse.Namespace:
         help="comma-separated additional include search directories",
     )
     parser.add_argument(
+        "-D",
+        dest="defines",
+        action="append",
+        default=[],
+        metavar="NAME[=VALUE]",
+        help="additional preprocessor macro definition, e.g. "
+        "-DNPU_WIFI_TARGET_MT7916",
+    )
+    parser.add_argument(
         "-o",
         dest="output",
         default="npu",
@@ -339,12 +348,14 @@ def compile_source(
     source: Path,
     output: Path,
     common_flags: list[str],
+    defines: list[str],
     include_directories: list[Path],
     is_assembly: bool,
     use_lto: bool = True,
 ) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     command = [compiler, *common_flags]
+    command.extend(f"-D{definition}" for definition in defines)
     if not is_assembly:
         command.extend(
             [
@@ -498,6 +509,7 @@ def main() -> int:
                     source,
                     object_path,
                     common_flags,
+                    arguments.defines,
                     include_directories,
                     is_assembly,
                     use_lto,
